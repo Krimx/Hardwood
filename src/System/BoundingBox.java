@@ -1,4 +1,7 @@
 package System;
+
+import java.awt.geom.Rectangle2D;
+
 public class BoundingBox {
     // 1. Core Data
     public float x, y;
@@ -101,5 +104,9 @@ public class BoundingBox {
                 return CollisionSide.TOP;
             }
         }
+    }
+    
+    public Rectangle2D.Float getBounds2D() {
+        return new Rectangle2D.Float(this.x, this.y, this.width, this.height);
     }
 }

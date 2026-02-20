@@ -17,6 +17,9 @@ public class Player extends Entity {
     private Color jumpColor;
     private BufferedImage spritesheet;
     private int direction;
+    private boolean isCrouching = false;
+    private float normalHeight = 66f; // Your original height
+    private float crouchHeight = 33f; // Half height
 
     public Player(float x, float y, float w, float h, int renderLayer) {
         super(x, y, w, h, renderLayer);
@@ -89,5 +92,31 @@ public class Player extends Entity {
     @Override
     public void update() {
         super.getBoundingBox().update(super.getX() - (super.getW()/2), super.getY() - (super.getH()/2), super.getW(), super.getH());
+    }
+    
+    public void setCrouching(boolean crouching) {
+        if (this.isCrouching == crouching) return;
+        
+        // 1. Record where the feet are RIGHT NOW
+        float feetY = this.getY() - (this.getH() / 2f); 
+        
+        this.isCrouching = crouching;
+        
+        // 2. Change the height
+        if (isCrouching) {
+            this.setH(crouchHeight);
+        } else {
+            this.setH(normalHeight);
+        }
+        
+        // 3. Move the center Y so the feet stay at the EXACT same spot
+        this.setY(feetY + (this.getH() / 2f));
+        
+        // 4. Force an immediate BoundingBox sync
+        this.update(); 
+    }
+    
+    public boolean isCrouching() {
+        return isCrouching;
     }
 }

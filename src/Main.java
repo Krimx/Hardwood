@@ -48,6 +48,7 @@ public class Main {
     public static BufferedImage playerSpritesheet = ImageLoader.loadImage("/sprites/player.png");
  // Add to your static fields in Main.java
     public static ControllerManager controllers = new ControllerManager();
+    public static boolean dpadReset = true;
 
     public static BufferedImage background1 = ImageLoader.loadImage("/sprites/country-platform-back.png");
     public static BufferedImage background2 = ImageLoader.loadImage("/sprites/country-platform-forest.png");
@@ -70,6 +71,7 @@ public class Main {
     public static ArrayList<Sprite> sprites = new ArrayList<>();
     public static MenuButton startButton = new MenuButton(10, 10, FontLoader.getTextDimensions(menuFont, "Start Game").width, menuFont.getSize(), 10, "Start Game");
     public static MenuButton exitButton = new MenuButton(10, 58, FontLoader.getTextDimensions(menuFont, "Exit Game").width, menuFont.getSize(), 10, "Exit Game");
+    public static MenuButton currentBtn = startButton;
     
     public static Sound jumpSound;
     public static Sound[] stepSounds = {null, null, null, null};
@@ -117,6 +119,11 @@ public class Main {
         blocks = MapLoader.loadMap("/maps/testMap.map");
 //        blocks.add(new Block(40, -80, 3000, 40, 2));
 //        blocks.add(new Block(60, -40, 40, 40, 2));
+        
+        startButton.down = exitButton;
+        exitButton.up = startButton;
+        currentBtn = startButton; // Default selection
+        currentBtn.setSelected(true);
         
         jumpSound = new Sound("/sounds/jumpWoosh.wav");
         stepSounds[0] = new Sound("/sounds/footsteps/footstep1.wav");
@@ -199,14 +206,16 @@ public class Main {
     // TICK
     // ==========================================
     public static void tick(float dt) {
+    	ControllerState curr = controllers.getState(0);
     	if (menu == Menu.MAIN) {
-    		mainMenu();
+    		mainMenu(curr);
     	}
     	else if (menu == Menu.GAMEPLAY) {
-    		mainGame(dt);
+    		mainGame(dt, curr);
     	}
         
         updateSystem();
+        keys.update();
     }
 
     // ==========================================
@@ -286,11 +295,11 @@ public class Main {
     // ==========================================
     // MAIN GAME LOGIC
     // ==========================================
-    public static void mainGame(float dt) {
+    public static void mainGame(float dt, ControllerState curr) {
     	controllers.update();
-        ControllerState curr = controllers.getState(0);
     	if (!controls.jump(keys, curr)) controls.jumpable = true;
-    	if (keys.keys[KeyEvent.VK_ESCAPE]) {
+    	if (controls.crouch(keys,curr)) System.out.println("Crouching");
+    	if (controls.escape(keys, curr)) {
 			menu = Menu.MAIN;
 		}
         playerLogic(dt, curr);
@@ -306,28 +315,62 @@ public class Main {
     // ==========================================
     // MAIN MENU LOGIC
     // ==========================================
-    public static void mainMenu() {
-    	if (keys.keys[KeyEvent.VK_ENTER]) {
+    public static void mainMenu(ControllerState curr) {
+    	if (controls.escape(keys, curr)) {
 			menu = Menu.GAMEPLAY;
 		}
-    	if (exitButton.isHovering(mouse) && mouse.buttons[1]) {
-    		running = false;
-    	}
-    	if (startButton.isHovering(mouse) && mouse.buttons[1]) {
-    		menu = Menu.GAMEPLAY;
-    	}
+        // 1. Handle Navigation (Controller/Keyboard)
+        updateMenuNavigation(curr);
+
+        // 2. Sync Mouse Hover with Selection
+        // If the mouse moves, it should take priority over the controller selection
+        if (startButton.isHovering(mouse)) {
+            currentBtn.setSelected(false);
+            currentBtn = startButton;
+            currentBtn.setSelected(true);
+        } else if (exitButton.isHovering(mouse)) {
+            currentBtn.setSelected(false);
+            currentBtn = exitButton;
+            currentBtn.setSelected(true);
+        }
+
+        // 3. Handle "Accept" Action (Start Game)
+        boolean acceptInput = keys.keys[KeyEvent.VK_ENTER] || curr.a;
+        if ((acceptInput && currentBtn == startButton) || (startButton.isHovering(mouse) && mouse.buttons[1])) {
+            menu = Menu.GAMEPLAY;
+        }
+
+        // 4. Handle "Exit" Action
+        if ((acceptInput && currentBtn == exitButton) || (exitButton.isHovering(mouse) && mouse.buttons[1])) {
+            running = false;
+        }
     }
     
     public static void playerLogic(float dt, ControllerState curr) {
     	Player player = (Player)entities.get(0);
         player.updateAnimation(dt);
         
+        boolean inputtingCrouch = controls.crouch(keys, curr);
+        
+        if (inputtingCrouch && player.isGrounded()) {
+            player.setCrouching(true);
+        } else {
+            // Only stop crouching if the button is released AND there is no ceiling above
+            if (!isCeilingAbove(player)) {
+                player.setCrouching(false);
+            }
+        }
+        
+        float speedMultiplier = player.isCrouching() ? 0.5f : 1.0f;
+        float accel = player.isGrounded() ? player.getAcceleration() : player.getAccelerationInAir();
+        accel *= speedMultiplier;
+        
         if (controls.moveRight(keys, curr)) {
     		if (!player.isGrounded()) player.setVx(player.getVx() + player.getAccelerationInAir());
-    		else player.setVx(player.getVx() + player.getAcceleration());
+    		else player.setVx(player.getVx() + accel);
         } else if (controls.moveLeft(keys, curr)) {
         	if (!player.isGrounded()) player.setVx(player.getVx() - player.getAccelerationInAir());
-    		else player.setVx(player.getVx() - player.getAcceleration());
+    		else player.setVx(player.getVx() - accel);
         } else {
             player.setVx(player.getVx() * 0.8f); 
             if (Math.abs(player.getVx()) < 0.1f) player.setVx(0);
@@ -415,6 +458,56 @@ public class Main {
         }
         else {
         	lastStepTime = 0;
+        }
+    }
+    
+    public static boolean isCeilingAbove(Player player) {
+        // How much taller the player gets when standing
+        float heightDiff = 33f; 
+        
+        java.awt.geom.Rectangle2D.Float headCheck = new java.awt.geom.Rectangle2D.Float(
+            player.getX() - (player.getW() / 2f),
+            // Start from the top of the CURRENT (crouched) box
+            player.getY() + (player.getH() / 2f), 
+            player.getW(),
+            heightDiff // Look 'heightDiff' amount into the air
+        );
+
+        for (Block block : blocks) {
+            if (headCheck.intersects(block.getBoundingBox().getBounds2D())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public static void updateMenuNavigation(ControllerState curr) {
+        // Check for directional input
+        boolean up = keys.keys[KeyEvent.VK_UP] || curr.dpadUp || curr.leftStickY > 0.5;
+        boolean down = keys.keys[KeyEvent.VK_DOWN] || curr.dpadDown || curr.leftStickY < -0.5;
+        boolean left = keys.keys[KeyEvent.VK_LEFT] || curr.dpadLeft || curr.leftStickX < -0.5;
+        boolean right = keys.keys[KeyEvent.VK_RIGHT] || curr.dpadRight || curr.leftStickX > 0.5;
+        
+        System.out.println(up + ", " + down + ", " + left + ", " + right);
+
+        if (dpadReset) {
+            MenuButton next = null;
+            if (up) next = currentBtn.up;
+            if (down) next = currentBtn.down;
+            if (left) next = currentBtn.left;
+            if (right) next = currentBtn.right;
+
+            if (next != null) {
+                currentBtn.setSelected(false);
+                currentBtn = next;
+                currentBtn.setSelected(true);
+                dpadReset = false; // Lock movement until keys/stick released
+            }
+        }
+
+        // Reset the lock when no directional input is detected
+        if (!up && !down && !left && !right) {
+            dpadReset = true;
         }
     }
 }

@@ -8,6 +8,8 @@ public class MenuButton {
 	private boolean hovering;
 	private int padding;
 	private String text;
+	public MenuButton up, down, left, right;
+	private boolean selected;
 
 	public MenuButton(int x, int y, int w, int h, int padding, String text) {
 		this.padding = padding;
@@ -56,11 +58,18 @@ public class MenuButton {
 		return this.hovering;
 	}
 	public void render(Graphics2D g2) {
-		if (this.hovering) g2.setColor(new Color(50,50,50));
+		if (this.hovering || this.selected) g2.setColor(new Color(50,50,50));
 		else g2.setColor(new Color(0,0,0));
 		g2.fillRect(x, y, w, h);
-		if (this.hovering) g2.setColor(new Color(225,225,225));
+		if (this.hovering || this.selected) g2.setColor(new Color(225,225,225));
 		else g2.setColor(new Color(200,200,200));
 		g2.drawString(this.text, x + this.padding / 2, y + this.padding / 2 + (g2.getFont().getSize() * .75f));
 	}
+	public void setSelected(boolean selected) {
+        this.selected = selected;
+    }
+
+    public boolean isSelected() {
+        return selected;
+    }
 }

@@ -8,6 +8,8 @@ public class Controls {
     public int KEY_LEFT = KeyEvent.VK_A;
     public int KEY_RIGHT = KeyEvent.VK_D;
     public int KEY_JUMP = KeyEvent.VK_SPACE;
+    public int KEY_CROUCH = KeyEvent.VK_SHIFT;
+    public int KEY_ESCAPE = KeyEvent.VK_ESCAPE;
     
     public boolean jumpable = false;
     private float deadzone = 0.2f;
@@ -23,5 +25,13 @@ public class Controls {
 
     public boolean jump(KeyHandler keys, ControllerState curr) {
         return keys.keys[KEY_JUMP] || curr.a;
+    }
+    
+    public boolean crouch(KeyHandler keys, ControllerState curr) {
+    	return keys.keys[KEY_CROUCH] || curr.b;
+    }
+    
+    public boolean escape(KeyHandler keys, ControllerState curr) {
+    	return keys.isJustPressed(KEY_ESCAPE) || curr.startJustPressed;
     }
 }
