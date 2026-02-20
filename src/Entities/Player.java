@@ -52,18 +52,24 @@ public class Player extends Entity {
         int renderX = (int) (this.getX() + (scrW / 2) - (this.getW() / 2) - camera.getX());
         int renderY = (int) (scrH - this.getY() - (scrH / 2) - (this.getH() / 2) - camera.getY());
         
+        // --- VIEW CULLING ---
+        if (renderX + this.getW() < 0 || renderX > scrW || 
+            renderY + this.getH() < 0 || renderY > scrH) {
+            return null; // Don't process anything else
+        }
+        
         // 4. Decide which Color to use right now
         Color colorToRender = null;
         BufferedImage sprite = ImageLoader.getSlice(spritesheet, 0, 0, 20, 33);
         if (this.getVx() != 0) this.direction = (this.getVx() > 0) ? 1 : -1;
         
         if (!isGrounded()) {
-        	if (this.getVy() >= 0) colorToRender = Color.green;
-        	else colorToRender = Color.blue;
+            if (this.getVy() >= 0) colorToRender = Color.green;
+            else colorToRender = Color.blue;
         } else if (Math.abs(getVx()) > 0.1f) {
             sprite = ImageLoader.getSlice(this.spritesheet, (this.runAnim.getCurrentFrame() * 20), 33, 20, 33);
         } else {
-//            colorToRender = idleAnim.getCurrentColor();
+//                colorToRender = idleAnim.getCurrentColor();
         }
 
         // 5. Return sprite with the calculated color

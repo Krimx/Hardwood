@@ -13,6 +13,8 @@ import java.util.Random;
 
 import javax.swing.JFrame;
 
+import com.studiohartman.jamepad.*;
+
 import Entities.Entity;
 import Entities.Player;
 import Objects.Block;
@@ -44,6 +46,8 @@ public class Main {
     public static Controls controls = new Controls();
     public static Font menuFont = FontLoader.loadFont("/fonts/KiwiSoda.ttf", 32f);
     public static BufferedImage playerSpritesheet = ImageLoader.loadImage("/sprites/player.png");
+ // Add to your static fields in Main.java
+    public static ControllerManager controllers = new ControllerManager();
 
     public static BufferedImage background1 = ImageLoader.loadImage("/sprites/country-platform-back.png");
     public static BufferedImage background2 = ImageLoader.loadImage("/sprites/country-platform-forest.png");
@@ -53,6 +57,11 @@ public class Main {
     public static boolean running = true;
     public static final double TARGET_TPS = 60.0; 
     public static final double NS_PER_TICK = 1000000000.0 / TARGET_TPS;
+ // --- FPS LIMITER SETTINGS ---
+    public static boolean limitFPS = true; 
+    // Automatically gets your monitor's refresh rate (e.g., 60, 144)
+    public static int targetFPS = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode().getRefreshRate();
+    // ----------------------------
     
     public static int scrW = 600, scrH = 600;
 
@@ -102,6 +111,8 @@ public class Main {
     // INIT
     // ==========================================
     public static void init() {
+    	controllers.initSDLGamepad(); // Start Jamepad
+    	
         entities.add(new Player(0,0,40,66,1));
         blocks = MapLoader.loadMap("/maps/testMap.map");
 //        blocks.add(new Block(40, -80, 3000, 40, 2));
@@ -120,24 +131,64 @@ public class Main {
     public static void runGameLoop() {
         new Thread(() -> {
             long lastTime = System.nanoTime();
+            long lastRenderTime = System.nanoTime(); // Track render time separately
             double delta = 0; 
+            
+            long timer = System.currentTimeMillis();
+            int frames = 0;
             
             while (running) {
                 long now = System.nanoTime();
                 delta += (now - lastTime) / NS_PER_TICK;
                 lastTime = now;
 
-                boolean shouldRender = true; 
+                boolean didTick = false;
 
+                // 1. PHYSICS UPDATE (Still strictly 60 TPS)
                 while (delta >= 1) {
                     tick((float) (1.0 / TARGET_TPS));
-                    
                     delta--;
-                    shouldRender = true;
+                    didTick = true;
+                }
+                
+                long nsPerFrame = 1000000000L / targetFPS;
+
+                // 2. RENDER UPDATE
+                boolean shouldRender = false;
+                
+                if (!limitFPS) {
+                    // If uncapped, ALWAYS render
+                    shouldRender = true; 
+                } else {
+                    // If capped, check if enough time has passed for the next frame
+                    long renderDelta = now - lastRenderTime;
+                    nsPerFrame = 1000000000L / targetFPS; 
+                    
+                    if (renderDelta >= nsPerFrame) {
+                        shouldRender = true;
+                    }
                 }
 
+                // 3. EXECUTE RENDER & SLEEP
                 if (shouldRender) {
                     render();
+                    lastRenderTime += nsPerFrame;
+                    frames++;
+                } else if (!didTick) {
+                    // THE COIL WHINE SAVER
+                    // Only sleep if we didn't tick and didn't render.
+                    try {
+                        Thread.sleep(1); 
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                
+                // 4. PRINT FPS
+                if (System.currentTimeMillis() - timer > 1000) {
+                    timer += 1000;
+                    System.out.println("FPS: " + frames + " | Target: " + (limitFPS ? targetFPS : "Uncapped"));
+                    frames = 0; 
                 }
             }
             System.exit(0);
@@ -196,7 +247,8 @@ public class Main {
             sprites.add(entity.genSprite(scrW, scrH, camera));
         }
         for (Block block : blocks) {
-            sprites.add(block.genSprite(scrW, scrH, camera));
+            Sprite s = block.genSprite(scrW, scrH, camera);
+            if (s != null) sprites.add(s);
         }
         sprites.add(new Sprite(0.0f, -background1.getWidth() - (camera.getX() * bgFactor),   -100 - (camera.getY() * bgFactor / 2), 1152, 672, background1));
         sprites.add(new Sprite(0.1f, -background2.getWidth() - (camera.getX() * bgFactor*2), -100 - (camera.getY() * bgFactor / 2)*2, 1152, 672, background2));
@@ -235,11 +287,13 @@ public class Main {
     // MAIN GAME LOGIC
     // ==========================================
     public static void mainGame(float dt) {
-    	if (!keys.keys[controls.JUMP]) controls.jumpable = true;
+    	controllers.update();
+        ControllerState curr = controllers.getState(0);
+    	if (!controls.jump(keys, curr)) controls.jumpable = true;
     	if (keys.keys[KeyEvent.VK_ESCAPE]) {
 			menu = Menu.MAIN;
 		}
-        playerLogic(dt);
+        playerLogic(dt, curr);
     	Player player = (Player)entities.get(0);
         
         if (lastStepTime >= stepSoundInterval && player.isGrounded() && player.getVx() != 0) {
@@ -264,14 +318,14 @@ public class Main {
     	}
     }
     
-    public static void playerLogic(float dt) {
+    public static void playerLogic(float dt, ControllerState curr) {
     	Player player = (Player)entities.get(0);
         player.updateAnimation(dt);
         
-        if (keys.keys[controls.MOVE_RIGHT]) {
+        if (controls.moveRight(keys, curr)) {
     		if (!player.isGrounded()) player.setVx(player.getVx() + player.getAccelerationInAir());
     		else player.setVx(player.getVx() + player.getAcceleration());
-        } else if (keys.keys[controls.MOVE_LEFT]) {
+        } else if (controls.moveLeft(keys, curr)) {
         	if (!player.isGrounded()) player.setVx(player.getVx() - player.getAccelerationInAir());
     		else player.setVx(player.getVx() - player.getAcceleration());
         } else {
@@ -284,7 +338,7 @@ public class Main {
         if (player.getVx() > maxSpeed) player.setVx(maxSpeed);
         if (player.getVx() < -maxSpeed) player.setVx(-maxSpeed);
 
-        if (keys.keys[controls.JUMP] && player.isGrounded() && controls.jumpable) {
+        if ((controls.jump(keys, curr)) && player.isGrounded() && controls.jumpable) {
         	if (jumpSound != null) jumpSound.play();
             player.setVy(player.getJumpPower()); 
             player.setGrounded(false);
@@ -312,15 +366,15 @@ public class Main {
                 player.update(); 
             }
         }
-        if (collisionDirection != 0 && (keys.keys[controls.MOVE_RIGHT] || keys.keys[controls.MOVE_LEFT])) {
+        if (collisionDirection != 0 && (controls.moveRight(keys, curr) || controls.moveLeft(keys, curr))) {
         	player.setGravity(5.0f);
         	if (controls.jumpable) {
-        		if (keys.keys[controls.MOVE_RIGHT] && collisionDirection == 1 && keys.keys[controls.JUMP]) {
+        		if (controls.moveRight(keys, curr) && collisionDirection == 1 && controls.jump(keys, curr)) {
             		player.setVx(-player.getWallJumpPower());
             		player.setVy(player.getJumpPower());
             		controls.jumpable = false;
             	}
-            	if (keys.keys[controls.MOVE_LEFT] && collisionDirection == -1 && keys.keys[controls.JUMP]) {
+            	if (controls.moveLeft(keys, curr) && collisionDirection == -1 && controls.jump(keys, curr)) {
             		player.setVx(player.getWallJumpPower());
             		player.setVy(player.getJumpPower());
             		controls.jumpable = false;

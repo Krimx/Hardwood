@@ -51,10 +51,18 @@ public class Block {
 	}
 	
 	public Sprite genSprite(int scrW, int scrH, Camera camera) {
-		int renderX = (int) (this.getX() + (scrW / 2) - (this.getW() / 2) - camera.getX());
-		int renderY = (int) (scrH - this.getY() - (scrH / 2) - (this.getH() / 2) - camera.getY());
-		
-		return new Sprite(this.renderLayer, renderX, renderY, this.getW(), this.getH(), Color.black);
+	    int renderX = (int) (this.getX() + (scrW / 2) - (this.getW() / 2) - camera.getX());
+	    int renderY = (int) (scrH - this.getY() - (scrH / 2) - (this.getH() / 2) - camera.getY());
+	    
+	    // --- VIEW CULLING ---
+	    // If the right edge is past the left screen bound, OR the left edge is past the right screen bound...
+	    // OR the bottom is above the top bound, OR the top is below the bottom bound: Cull it.
+	    if (renderX + this.getW() < 0 || renderX > scrW || 
+	        renderY + this.getH() < 0 || renderY > scrH) {
+	        return null;
+	    }
+	    
+	    return new Sprite(this.renderLayer, renderX, renderY, this.getW(), this.getH(), Color.black);
 	}
 	
 	public void render(Graphics2D g2, int scrW, int scrH) {
