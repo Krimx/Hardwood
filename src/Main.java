@@ -15,6 +15,7 @@ import javax.swing.JFrame;
 
 import Entities.Entity;
 import Entities.Player;
+import Entities.RoamingEnemy;
 import Objects.Block;
 import System.Camera;
 import System.Controls;
@@ -103,6 +104,7 @@ public class Main {
     // ==========================================
     public static void init() {
         entities.add(new Player(0,0,40,66,1));
+        entities.add(new RoamingEnemy(60,0,40,66,1));
         blocks = MapLoader.loadMap("/maps/testMap.map");
 //        blocks.add(new Block(40, -80, 3000, 40, 2));
 //        blocks.add(new Block(60, -40, 40, 40, 2));
@@ -240,6 +242,12 @@ public class Main {
 			menu = Menu.MAIN;
 		}
         playerLogic(dt);
+        enemyLogic(dt);
+        if (keys.keys[KeyEvent.VK_ENTER]) {
+        	entities.get(1).setX(60);
+        	entities.get(1).setY(0);
+        }
+        
     	Player player = (Player)entities.get(0);
         
         if (lastStepTime >= stepSoundInterval && player.isGrounded() && player.getVx() != 0) {
@@ -361,6 +369,82 @@ public class Main {
         }
         else {
         	lastStepTime = 0;
+        }
+    }
+    
+    public static void enemyLogic(float dt) {
+        // Assuming player is the first entity in your list
+        Player player = (Player) entities.get(0);
+
+        for (Entity entity : entities) {
+            if (entity instanceof RoamingEnemy) {
+                RoamingEnemy enemy = (RoamingEnemy) entity;
+
+                // --- 1. DETECTION LOGIC (The "Aggro" Brain) ---
+                float dist = (float) Math.sqrt(Math.pow(player.getX() - enemy.getX(), 2) + Math.pow(player.getY() - enemy.getY(), 2));
+                boolean isAggro = dist < 250; // Detection range of 250 pixels
+
+                if (isAggro) {
+                    // MOVE TOWARD PLAYER
+                    if (player.getX() < enemy.getX()) {
+                        enemy.setVx(-enemy.getRoamSpeed() * 1.5f); // Chase slightly faster than patrol
+                    } else {
+                        enemy.setVx(enemy.getRoamSpeed() * 1.5f);
+                    }
+                } else {
+                    // PATROL LOGIC (Your existing timer code)
+                    enemy.setTimer(enemy.getTimer() + 1);
+                    if (enemy.getTimer() > 120) {
+                        enemy.setTimer(0);
+                        enemy.setState((enemy.getState() + 1) % 4);
+                    }
+                    switch (enemy.getState()) {
+                        case 0: enemy.setVx(-enemy.getRoamSpeed()); break;
+                        case 1: enemy.setVx(0); break;
+                        case 2: enemy.setVx(enemy.getRoamSpeed()); break;
+                        case 3: enemy.setVx(0); break;
+                    }
+                }
+
+                // --- 2. GRAVITY ---
+                enemy.setVy(enemy.getVy() - 0.5f);
+                if (enemy.getVy() < -12.0f) enemy.setVy(-12.0f);
+
+                // --- 3. X-AXIS MOVEMENT & JUMPING ---
+                enemy.addX(enemy.getVx());
+                enemy.update();
+                for (Block block : blocks) {
+                    if (enemy.getBoundingBox().intersects(block.getBoundingBox())) {
+                        if (enemy.getVx() > 0) enemy.setX(block.getX() - (block.getW()/2) - (enemy.getW()/2));
+                        else if (enemy.getVx() < 0) enemy.setX(block.getX() + (block.getW()/2) + (enemy.getW()/2));
+                        
+                        if (enemy.isGrounded()) {
+                            enemy.setVy(enemy.getJumpPower());
+                            enemy.setGrounded(false);
+                        }
+                        enemy.update();
+                    }
+                }
+
+                // --- 4. Y-AXIS MOVEMENT & COLLISIONS ---
+                enemy.addY(enemy.getVy());
+                enemy.update();
+                boolean onGround = false;
+                for (Block block : blocks) {
+                    if (enemy.getBoundingBox().intersects(block.getBoundingBox())) {
+                        if (enemy.getVy() < 0) { // Landing
+                            enemy.setY(block.getY() + (block.getH() / 2) + (enemy.getH() / 2));
+                            enemy.setVy(0);
+                            onGround = true;
+                        } else if (enemy.getVy() > 0) { // Head bump
+                            enemy.setY(block.getY() - (block.getH() / 2) - (enemy.getH() / 2));
+                            enemy.setVy(0);
+                        }
+                        enemy.update();
+                    }
+                }
+                enemy.setGrounded(onGround);
+            }
         }
     }
 }
