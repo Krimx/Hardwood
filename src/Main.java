@@ -13,6 +13,8 @@ import java.util.Random;
 
 import javax.swing.JFrame;
 
+import com.studiohartman.jamepad.*;
+
 import Entities.Entity;
 import Entities.Player;
 import Entities.RoamingEnemy;
@@ -28,41 +30,65 @@ import System.MouseHandler;
 import System.Sound;
 import System.Sprite;
 
+/**
+ * Enum representing the current state of the game.
+ */
 enum Menu {
 	MAIN,
 	PAUSE,
 	GAMEPLAY
 }
 
+/**
+ * The core engine wrapper class for the game. Manages global variables,
+ * the primary game loop (TPS & FPS constraints), routing of rendering calls, 
+ * and initializing all subsystems.
+ */
 public class Main {
+    // --- Core Window & Input Components ---
     public static JFrame frame = new JFrame();
     public static Canvas canvas = new Canvas(); 
     public static KeyHandler keys = new KeyHandler();
     public static MouseHandler mouse = new MouseHandler();
     public static Camera camera = new Camera(0,0);
     public static Random random = new Random();
+    
+    // --- Game State & UI ---
     public static Menu menu = Menu.GAMEPLAY;
     public static Controls controls = new Controls();
     public static Font menuFont = FontLoader.loadFont("/fonts/KiwiSoda.ttf", 32f);
     public static BufferedImage playerSpritesheet = ImageLoader.loadImage("/sprites/player.png");
+    public static ControllerManager controllers = new ControllerManager();
+    public static boolean dpadReset = true;
 
+    // --- Background Assets & Parallax ---
     public static BufferedImage background1 = ImageLoader.loadImage("/sprites/country-platform-back.png");
     public static BufferedImage background2 = ImageLoader.loadImage("/sprites/country-platform-forest.png");
     public static BufferedImage background3 = ImageLoader.loadImage("/sprites/country-platform-tiles-example.png");
     public static float bgFactor = 0.2f;
 
+    // --- Game Loop Timing & FPS ---
     public static boolean running = true;
     public static final double TARGET_TPS = 60.0; 
     public static final double NS_PER_TICK = 1000000000.0 / TARGET_TPS;
+    public static boolean limitFPS = true; 
+    public static int targetFPS = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode().getRefreshRate();
+    // ----------------------------
     
+    // --- Resolution ---
     public static int scrW = 600, scrH = 600;
 
+    // --- Game World Data ---
     public static ArrayList<Entity> entities = new ArrayList<>();
     public static ArrayList<Block> blocks = new ArrayList<>();
     public static ArrayList<Sprite> sprites = new ArrayList<>();
+    
+    // --- Main Menu Buttons ---
     public static MenuButton startButton = new MenuButton(10, 10, FontLoader.getTextDimensions(menuFont, "Start Game").width, menuFont.getSize(), 10, "Start Game");
     public static MenuButton exitButton = new MenuButton(10, 58, FontLoader.getTextDimensions(menuFont, "Exit Game").width, menuFont.getSize(), 10, "Exit Game");
+    public static MenuButton currentBtn = startButton;
     
+    // --- Audio ---
     public static Sound jumpSound;
     public static Sound[] stepSounds = {null, null, null, null};
     public static float lastStepTime = 0, stepSoundInterval = 0.3f;
@@ -72,6 +98,10 @@ public class Main {
     // ==========================================
     // MAIN
     // ==========================================
+    /**
+     * The primary entry point for the application.
+     * Initializes the game data, sets up the window, and starts the game loop.
+     */
     public static void main(String[] args) throws Exception {
         init();
         initJFrame();
@@ -81,6 +111,10 @@ public class Main {
     // ==========================================
     // INIT JFRAME
     // ==========================================
+    /**
+     * Prepares and assembles the base JFrame window, tying the global Canvas
+     * to the input listeners and display handlers.
+     */
     public static void initJFrame() {
         frame.setSize(scrW, scrH);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -102,13 +136,26 @@ public class Main {
     // ==========================================
     // INIT
     // ==========================================
+    /**
+     * Initializes controllers, parses the maps, loads base entities, stitches 
+     * together the UI navigation graph, and loads audio.
+     */
     public static void init() {
+    	controllers.initSDLGamepad(); // Start Jamepad
+    	
         entities.add(new Player(0,0,40,66,1));
         entities.add(new RoamingEnemy(60,0,40,66,1));
         blocks = MapLoader.loadMap("/maps/testMap.map");
 //        blocks.add(new Block(40, -80, 3000, 40, 2));
 //        blocks.add(new Block(60, -40, 40, 40, 2));
         
+        // Stitch the Menu Node Graph together
+        startButton.down = exitButton;
+        exitButton.up = startButton;
+        currentBtn = startButton; // Default selection
+        currentBtn.setSelected(true);
+        
+        // Load global audio assets
         jumpSound = new Sound("/sounds/jumpWoosh.wav");
         stepSounds[0] = new Sound("/sounds/footsteps/footstep1.wav");
         stepSounds[1] = new Sound("/sounds/footsteps/footstep2.wav");
@@ -119,27 +166,72 @@ public class Main {
     // ==========================================
     // RUN GAME LOOP
     // ==========================================
+    /**
+     * The master game loop threading implementation. Responsible for capping frame rates,
+     * maintaining exactly 60 logical Ticks Per Second (TPS), and tracking performance.
+     */
     public static void runGameLoop() {
         new Thread(() -> {
             long lastTime = System.nanoTime();
+            long lastRenderTime = System.nanoTime(); // Track render time separately
             double delta = 0; 
+            
+            long timer = System.currentTimeMillis();
+            int frames = 0;
             
             while (running) {
                 long now = System.nanoTime();
                 delta += (now - lastTime) / NS_PER_TICK;
                 lastTime = now;
 
-                boolean shouldRender = true; 
+                boolean didTick = false;
 
+                // 1. PHYSICS UPDATE (Still strictly 60 TPS)
+                // Consume accumulated delta time in fixed steps to ensure consistent physics
                 while (delta >= 1) {
                     tick((float) (1.0 / TARGET_TPS));
-                    
                     delta--;
-                    shouldRender = true;
+                    didTick = true;
+                }
+                
+                long nsPerFrame = 1000000000L / targetFPS;
+
+                // 2. RENDER UPDATE
+                boolean shouldRender = false;
+                
+                if (!limitFPS) {
+                    // If uncapped, ALWAYS render
+                    shouldRender = true; 
+                } else {
+                    // If capped, check if enough time has passed for the next frame based on target refresh rate
+                    long renderDelta = now - lastRenderTime;
+                    nsPerFrame = 1000000000L / targetFPS; 
+                    
+                    if (renderDelta >= nsPerFrame) {
+                        shouldRender = true;
+                    }
                 }
 
+                // 3. EXECUTE RENDER & SLEEP
                 if (shouldRender) {
                     render();
+                    lastRenderTime += nsPerFrame;
+                    frames++;
+                } else if (!didTick) {
+                    // THE COIL WHINE SAVER
+                    // Only sleep if we didn't tick and didn't render to prevent 100% CPU usage.
+                    try {
+                        Thread.sleep(1); 
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                
+                // 4. PRINT FPS
+                if (System.currentTimeMillis() - timer > 1000) {
+                    timer += 1000;
+                    System.out.println("FPS: " + frames + " | Target: " + (limitFPS ? targetFPS : "Uncapped"));
+                    frames = 0; 
                 }
             }
             System.exit(0);
@@ -149,20 +241,31 @@ public class Main {
     // ==========================================
     // TICK
     // ==========================================
+    /**
+     * The primary dispatcher for logical game progression based on the current Menu State.
+     * * @param dt the delta time passed into logic systems (usually 1/60s).
+     */
     public static void tick(float dt) {
+    	ControllerState curr = controllers.getState(0);
+    	if (controls.debug(keys, curr)) entities.get(0).setPos(0,0);
     	if (menu == Menu.MAIN) {
-    		mainMenu();
+    		mainMenu(curr);
     	}
     	else if (menu == Menu.GAMEPLAY) {
-    		mainGame(dt);
+    		mainGame(dt, curr);
     	}
         
         updateSystem();
+        keys.update();
     }
 
     // ==========================================
     // RENDER
     // ==========================================
+    /**
+     * Prepares the graphics context, clears the screen, and routes drawing calls
+     * based on the active game state. Uses BufferStrategy to prevent screen tearing.
+     */
     public static void render() {
         BufferStrategy bs = canvas.getBufferStrategy();
         if (bs == null) {
@@ -173,8 +276,11 @@ public class Main {
         Graphics g = null;
         try {
             g = bs.getDrawGraphics();
+            // CLEAR SCREEN
             g.setColor(Color.WHITE);
             g.fillRect(0, 0, scrW, scrH);
+            
+            // Route rendering based on state
             if (menu == Menu.MAIN) drawMainMenu(g);
         	else if (menu == Menu.GAMEPLAY) drawGame(g);
         } finally {
@@ -189,23 +295,39 @@ public class Main {
     // ==========================================
     // DRAW GAME
     // ==========================================
+    /**
+     * Translates abstract object positions into view-specific pixel space, 
+     * handles parallax background rendering, and dispatches the Sprite List.
+     * * @param g The graphics context.
+     */
     public static void drawGame(Graphics g) {
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setColor(Color.BLACK);
         
+        // Generate Sprites for Entities
         for (Entity entity : entities) {
-            sprites.add(entity.genSprite(scrW, scrH, camera));
+            Sprite s = entity.genSprite(scrW, scrH, camera);
+            if (s != null) {
+                sprites.add(s);
+            }
         }
+        
+        // Generate Sprites for Blocks (Tile/World Geometry)
         for (Block block : blocks) {
-            sprites.add(block.genSprite(scrW, scrH, camera));
+            Sprite s = block.genSprite(scrW, scrH, camera);
+            if (s != null) sprites.add(s);
         }
+        
+        // Generate parallax background sprites (offset by camera position and bgFactor)
         sprites.add(new Sprite(0.0f, -background1.getWidth() - (camera.getX() * bgFactor),   -100 - (camera.getY() * bgFactor / 2), 1152, 672, background1));
         sprites.add(new Sprite(0.1f, -background2.getWidth() - (camera.getX() * bgFactor*2), -100 - (camera.getY() * bgFactor / 2)*2, 1152, 672, background2));
         sprites.add(new Sprite(0.2f, -background3.getWidth() - (camera.getX() * bgFactor*3), -100 - (camera.getY() * bgFactor / 2)*3, 1152, 672, background3));
         
+        // Sort to ensure correct Z-Ordering based on render layer
         sprites.sort(Comparator.comparing(Sprite::getRenderLayer));
         
+        // Commit all mapped Sprites to the Graphics Object
         for (Sprite sprite : sprites) {
             sprite.render(g2);
         }
@@ -215,6 +337,10 @@ public class Main {
     // ==========================================
     // DRAW MAIN MENU
     // ==========================================
+    /**
+     * Renders the main menu UI elements to the screen.
+     * * @param g The graphics context.
+     */
     public static void drawMainMenu(Graphics g) {
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -226,6 +352,9 @@ public class Main {
     // ==========================================
     // UPDATE SYSTEM
     // ==========================================
+    /**
+     * Keeps track of canvas dimension changes in case the window is resized.
+     */
     public static void updateSystem() {
         if (canvas.getWidth() > 0) {
              scrW = canvas.getWidth();
@@ -236,20 +365,32 @@ public class Main {
     // ==========================================
     // MAIN GAME LOGIC
     // ==========================================
-    public static void mainGame(float dt) {
-    	if (!keys.keys[controls.JUMP]) controls.jumpable = true;
-    	if (keys.keys[KeyEvent.VK_ESCAPE]) {
+    /**
+     * Logic loop exclusively for the active gameplay phase. 
+     * Iterates all loaded entities, passing injected dependencies (blocks, controllers, keys).
+     * * @param dt   Delta time for physics logic.
+     * @param curr The current controller state.
+     */
+    public static void mainGame(float dt, ControllerState curr) {
+    	controllers.update();
+    	if (!controls.jump(keys, curr)) controls.jumpable = true;
+    	
+    	// Allow backing out to the menu
+    	if (controls.escape(keys, curr)) {
 			menu = Menu.MAIN;
 		}
-        playerLogic(dt);
-        enemyLogic(dt);
-        if (keys.keys[KeyEvent.VK_ENTER]) {
-        	entities.get(1).setX(60);
-        	entities.get(1).setY(0);
-        }
-        
+    	
+    	// Delegate complex logic execution cleanly to the objects themselves via OOP
+    	for (Entity entity : entities) {
+    		entity.logic(dt, curr, keys, controls, blocks, entities);
+    	}
+//        playerLogic(dt, curr);
     	Player player = (Player)entities.get(0);
+    	
+    	// Ensure camera smoothly follows the Player
+    	camera.tick(player.getX(), -player.getY());
         
+    	// Process procedural sound generation based on Player state (e.g., footsteps)
         if (lastStepTime >= stepSoundInterval && player.isGrounded() && player.getVx() != 0) {
         	lastStepTime = 0;
         	int stepSound = random.nextInt(1,stepSounds.length - 1);
@@ -260,191 +401,73 @@ public class Main {
     // ==========================================
     // MAIN MENU LOGIC
     // ==========================================
-    public static void mainMenu() {
-    	if (keys.keys[KeyEvent.VK_ENTER]) {
+    /**
+     * Logic loop exclusively for the Main Menu screen. Bridges hybrid 
+     * controller and mouse/keyboard navigation.
+     * * @param curr The current controller state.
+     */
+    public static void mainMenu(ControllerState curr) {
+    	// Temporary shortcut to hop back to the game if needed
+    	if (controls.escape(keys, curr)) {
 			menu = Menu.GAMEPLAY;
 		}
-    	if (exitButton.isHovering(mouse) && mouse.buttons[1]) {
-    		running = false;
-    	}
-    	if (startButton.isHovering(mouse) && mouse.buttons[1]) {
-    		menu = Menu.GAMEPLAY;
-    	}
-    }
-    
-    public static void playerLogic(float dt) {
-    	Player player = (Player)entities.get(0);
-        player.updateAnimation(dt);
-        
-        if (keys.keys[controls.MOVE_RIGHT]) {
-    		if (!player.isGrounded()) player.setVx(player.getVx() + player.getAccelerationInAir());
-    		else player.setVx(player.getVx() + player.getAcceleration());
-        } else if (keys.keys[controls.MOVE_LEFT]) {
-        	if (!player.isGrounded()) player.setVx(player.getVx() - player.getAccelerationInAir());
-    		else player.setVx(player.getVx() - player.getAcceleration());
-        } else {
-            player.setVx(player.getVx() * 0.8f); 
-            if (Math.abs(player.getVx()) < 0.1f) player.setVx(0);
-        }
-        
-        
-        float maxSpeed = player.isGrounded() ? player.getMaxSpeed() : player.getMaxSpeedInAir();
-        if (player.getVx() > maxSpeed) player.setVx(maxSpeed);
-        if (player.getVx() < -maxSpeed) player.setVx(-maxSpeed);
+        // 1. Handle Navigation (Controller/Keyboard)
+        updateMenuNavigation(curr);
 
-        if (keys.keys[controls.JUMP] && player.isGrounded() && controls.jumpable) {
-        	if (jumpSound != null) jumpSound.play();
-            player.setVy(player.getJumpPower()); 
-            player.setGrounded(false);
-            controls.jumpable = false;
+        // 2. Sync Mouse Hover with Selection
+        // If the mouse moves, it should take priority over the controller selection
+        if (startButton.isHovering(mouse)) {
+            currentBtn.setSelected(false);
+            currentBtn = startButton;
+            currentBtn.setSelected(true);
+        } else if (exitButton.isHovering(mouse)) {
+            currentBtn.setSelected(false);
+            currentBtn = exitButton;
+            currentBtn.setSelected(true);
         }
 
-        player.setVy(player.getVy() - 0.5f); 
-        if (player.getVy() < -player.getGravity()) player.setVy(-player.getGravity());
-
-        player.addX(player.getVx());
-        
-        player.update(); 
-        int collisionDirection = 0;
-
-        for (Block block : blocks) {
-            if (player.getBoundingBox().intersects(block.getBoundingBox())) {
-                if (player.getVx() > 0) {
-                    player.setX(block.getX() - (block.getW() / 2) - (player.getW() / 2));
-                    collisionDirection = 1;
-                } else if (player.getVx() < 0) {
-                    player.setX(block.getX() + (block.getW() / 2) + (player.getW() / 2));
-                    collisionDirection = -1;
-                }
-                player.setVx(0);
-                player.update(); 
-            }
-        }
-        if (collisionDirection != 0 && (keys.keys[controls.MOVE_RIGHT] || keys.keys[controls.MOVE_LEFT])) {
-        	player.setGravity(5.0f);
-        	if (controls.jumpable) {
-        		if (keys.keys[controls.MOVE_RIGHT] && collisionDirection == 1 && keys.keys[controls.JUMP]) {
-            		player.setVx(-player.getWallJumpPower());
-            		player.setVy(player.getJumpPower());
-            		controls.jumpable = false;
-            	}
-            	if (keys.keys[controls.MOVE_LEFT] && collisionDirection == -1 && keys.keys[controls.JUMP]) {
-            		player.setVx(player.getWallJumpPower());
-            		player.setVy(player.getJumpPower());
-            		controls.jumpable = false;
-            	}
-        	}
-        	
-        }
-        else {
-        	player.setGravity(15.0f);
+        // 3. Handle "Accept" Action (Start Game)
+        boolean acceptInput = keys.keys[KeyEvent.VK_ENTER] || curr.a;
+        if ((acceptInput && currentBtn == startButton) || (startButton.isHovering(mouse) && mouse.buttons[1])) {
+            menu = Menu.GAMEPLAY;
         }
 
-		 float targetCamX = player.getX();
-		 float targetCamY = -player.getY(); 
-		
-		 camera.tick(targetCamX, targetCamY);
-
-        player.addY(player.getVy());
-        player.update(); 
-
-        for (Block block : blocks) {
-            if (player.getBoundingBox().intersects(block.getBoundingBox())) {
-                if (player.getVy() > 0) {
-                    player.setY(block.getY() - (block.getH() / 2) - (player.getH() / 2));
-                    player.setVy(0); 
-                    player.setGrounded(false);
-                } else if (player.getVy() < 0) {
-                    player.setY(block.getY() + (block.getH() / 2) + (player.getH() / 2));
-                    player.setVy(0); 
-                    if (!player.isGrounded()) stepSounds[0].play();
-                    player.setGrounded(true); 
-                }
-                player.update();
-            }
-        }
-        
-        if (player.isGrounded()) {
-        	lastStepTime += dt;
-        }
-        else {
-        	lastStepTime = 0;
+        // 4. Handle "Exit" Action
+        if ((acceptInput && currentBtn == exitButton) || (exitButton.isHovering(mouse) && mouse.buttons[1])) {
+            running = false;
         }
     }
     
-    public static void enemyLogic(float dt) {
-        // Assuming player is the first entity in your list
-        Player player = (Player) entities.get(0);
+    /**
+     * Safely reads generic directional inputs (stick, d-pad, arrow keys) and moves
+     * the menu pointer according to the connected directional graph in MenuButton.
+     * * @param curr The current controller state.
+     */
+    public static void updateMenuNavigation(ControllerState curr) {
+        // Check for directional input
+        boolean up = keys.keys[KeyEvent.VK_UP] || curr.dpadUp || curr.leftStickY > 0.5;
+        boolean down = keys.keys[KeyEvent.VK_DOWN] || curr.dpadDown || curr.leftStickY < -0.5;
+        boolean left = keys.keys[KeyEvent.VK_LEFT] || curr.dpadLeft || curr.leftStickX < -0.5;
+        boolean right = keys.keys[KeyEvent.VK_RIGHT] || curr.dpadRight || curr.leftStickX > 0.5;
 
-        for (Entity entity : entities) {
-            if (entity instanceof RoamingEnemy) {
-                RoamingEnemy enemy = (RoamingEnemy) entity;
+        if (dpadReset) {
+            MenuButton next = null;
+            if (up) next = currentBtn.up;
+            if (down) next = currentBtn.down;
+            if (left) next = currentBtn.left;
+            if (right) next = currentBtn.right;
 
-                // --- 1. DETECTION LOGIC (The "Aggro" Brain) ---
-                float dist = (float) Math.sqrt(Math.pow(player.getX() - enemy.getX(), 2) + Math.pow(player.getY() - enemy.getY(), 2));
-                boolean isAggro = dist < 250; // Detection range of 250 pixels
-
-                if (isAggro) {
-                    // MOVE TOWARD PLAYER
-                    if (player.getX() < enemy.getX()) {
-                        enemy.setVx(-enemy.getRoamSpeed() * 1.5f); // Chase slightly faster than patrol
-                    } else {
-                        enemy.setVx(enemy.getRoamSpeed() * 1.5f);
-                    }
-                } else {
-                    // PATROL LOGIC (Your existing timer code)
-                    enemy.setTimer(enemy.getTimer() + 1);
-                    if (enemy.getTimer() > 120) {
-                        enemy.setTimer(0);
-                        enemy.setState((enemy.getState() + 1) % 4);
-                    }
-                    switch (enemy.getState()) {
-                        case 0: enemy.setVx(-enemy.getRoamSpeed()); break;
-                        case 1: enemy.setVx(0); break;
-                        case 2: enemy.setVx(enemy.getRoamSpeed()); break;
-                        case 3: enemy.setVx(0); break;
-                    }
-                }
-
-                // --- 2. GRAVITY ---
-                enemy.setVy(enemy.getVy() - 0.5f);
-                if (enemy.getVy() < -12.0f) enemy.setVy(-12.0f);
-
-                // --- 3. X-AXIS MOVEMENT & JUMPING ---
-                enemy.addX(enemy.getVx());
-                enemy.update();
-                for (Block block : blocks) {
-                    if (enemy.getBoundingBox().intersects(block.getBoundingBox())) {
-                        if (enemy.getVx() > 0) enemy.setX(block.getX() - (block.getW()/2) - (enemy.getW()/2));
-                        else if (enemy.getVx() < 0) enemy.setX(block.getX() + (block.getW()/2) + (enemy.getW()/2));
-                        
-                        if (enemy.isGrounded()) {
-                            enemy.setVy(enemy.getJumpPower());
-                            enemy.setGrounded(false);
-                        }
-                        enemy.update();
-                    }
-                }
-
-                // --- 4. Y-AXIS MOVEMENT & COLLISIONS ---
-                enemy.addY(enemy.getVy());
-                enemy.update();
-                boolean onGround = false;
-                for (Block block : blocks) {
-                    if (enemy.getBoundingBox().intersects(block.getBoundingBox())) {
-                        if (enemy.getVy() < 0) { // Landing
-                            enemy.setY(block.getY() + (block.getH() / 2) + (enemy.getH() / 2));
-                            enemy.setVy(0);
-                            onGround = true;
-                        } else if (enemy.getVy() > 0) { // Head bump
-                            enemy.setY(block.getY() - (block.getH() / 2) - (enemy.getH() / 2));
-                            enemy.setVy(0);
-                        }
-                        enemy.update();
-                    }
-                }
-                enemy.setGrounded(onGround);
+            if (next != null) {
+                currentBtn.setSelected(false);
+                currentBtn = next;
+                currentBtn.setSelected(true);
+                dpadReset = false; // Lock movement until keys/stick released
             }
+        }
+
+        // Reset the lock when no directional input is detected (allows moving again)
+        if (!up && !down && !left && !right) {
+            dpadReset = true;
         }
     }
 }
