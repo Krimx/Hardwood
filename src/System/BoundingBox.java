@@ -2,6 +2,9 @@ package System;
 
 import java.awt.geom.Rectangle2D;
 
+/**
+ * Represents an AABB (Axis-Aligned Bounding Box) used for 2D collision detection.
+ */
 public class BoundingBox {
     // 1. Core Data
     public float x, y;
@@ -15,7 +18,9 @@ public class BoundingBox {
         RIGHT
     }
 
-    // 2. Constructors
+    /**
+     * Constructs a fully defined BoundingBox.
+     */
     public BoundingBox(float x, float y, float width, float height) {
         this.x = x;
         this.y = y;
@@ -23,12 +28,14 @@ public class BoundingBox {
         this.height = height;
     }
     
-    // Empty constructor for pooling or later assignment
+    /**
+     * Empty constructor for pooling or later assignment.
+     */
     public BoundingBox() {
         this(0, 0, 0, 0);
     }
 
-    // 3. Edge Helpers (Makes math easier to read)
+    // Edge Helpers (Makes math easier to read)
     public float getMinX() { return x; }
     public float getMaxX() { return x + width; }
     public float getMinY() { return y; }
@@ -37,68 +44,62 @@ public class BoundingBox {
     public float getCenterX() { return x + (width / 2f); }
     public float getCenterY() { return y + (height / 2f); }
 
-    // 4. Debugging
     @Override
     public String toString() {
         return "Box [x=" + x + ", y=" + y + ", w=" + width + ", h=" + height + "]";
     }
     
+    /**
+     * Updates the position and dimensions of the bounding box.
+     */
     public void update(float x, float y, float w, float h) {
         this.x = x;
         this.y = y;
         this.width = w;
         this.height = h;
     }
-    
+
     /**
-     * Checks if this bounding box overlaps with another.
-     * @param other The other box to check against.
-     * @return true if they are colliding, false otherwise.
+     * Checks if this bounding box overlaps with another bounding box.
+     * * @param other The other BoundingBox to check against.
+     * @return true if the boxes overlap, false otherwise.
      */
     public boolean intersects(BoundingBox other) {
-        return this.x < other.x + other.width &&    // My Left < Their Right
-               this.x + this.width > other.x &&     // My Right > Their Left
-               this.y < other.y + other.height &&   // My Bottom < Their Top
-               this.y + this.height > other.y;      // My Top > Their Bottom
+        // AABB collision logic: Checks if there is a gap between any of the 4 sides. 
+        // If there is no gap on any side, the boxes are colliding.
+        return this.x < other.x + other.width && 
+               this.x + this.width > other.x && 
+               this.y < other.y + other.height && 
+               this.height + this.y > other.y;
     }
-    
-    /**
-     * Determines which side of THIS box is colliding with the other box.
-     * Logic is based on the "Axis of Least Penetration".
-     */
-    public CollisionSide getCollisionSide(BoundingBox other) {
-        // 1. Calculate the distance between centers
-        float dx = (this.x + this.width / 2) - (other.x + other.width / 2);
-        float dy = (this.y + this.height / 2) - (other.y + other.height / 2);
 
-        // 2. Calculate the combined half-widths and half-heights
+    /**
+     * Calculates the side of collision relative to this bounding box.
+     * * @param other The other box colliding with this one.
+     * @return The CollisionSide indicating where the other box hit this one.
+     */
+    public CollisionSide getCollisionDirection(BoundingBox other) {
+        float dx = this.getCenterX() - other.getCenterX();
+        float dy = this.getCenterY() - other.getCenterY();
+
         float combinedHalfW = (this.width / 2) + (other.width / 2);
         float combinedHalfH = (this.height / 2) + (other.height / 2);
 
-        // 3. Check if they are actually colliding first
         if (Math.abs(dx) >= combinedHalfW || Math.abs(dy) >= combinedHalfH) {
             return CollisionSide.NONE;
         }
 
-        // 4. Calculate overlap on both axes
         float overlapX = combinedHalfW - Math.abs(dx);
         float overlapY = combinedHalfH - Math.abs(dy);
 
-        // 5. Determine the direction
-        // We assume the collision is on the axis with the LEAST overlap.
         if (overlapX < overlapY) {
-            // Horizontal Collision (Left or Right)
             if (dx > 0) {
-                // "This" is to the right of "Other", so "Other" hit our LEFT side
                 return CollisionSide.LEFT; 
             } else {
                 return CollisionSide.RIGHT;
             }
         } else {
-            // Vertical Collision (Top or Bottom)
             if (dy > 0) {
-                // "This" is above "Other" (assuming Y-Up), so "Other" hit our BOTTOM
-                // Note: If your coordinate system is Y-Down (0 at top), swap these returns!
                 return CollisionSide.BOTTOM;
             } else {
                 return CollisionSide.TOP;
@@ -106,7 +107,12 @@ public class BoundingBox {
         }
     }
     
+    /**
+     * Converts this BoundingBox to a standard Java Rectangle2D object.
+     * Useful for interfacing with Java's built-in geometry methods.
+     * * @return A Rectangle2D.Float representation of this box.
+     */
     public Rectangle2D.Float getBounds2D() {
-        return new Rectangle2D.Float(this.x, this.y, this.width, this.height);
+        return new Rectangle2D.Float(x, y, width, height);
     }
 }

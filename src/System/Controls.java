@@ -24,14 +24,18 @@ public class Controls {
     }
 
     public boolean jump(KeyHandler keys, ControllerState curr) {
-        return keys.keys[KEY_JUMP] || curr.a;
+        return keys.keys[KEY_JUMP] || curr.a || curr.dpadUp;
     }
     
     public boolean crouch(KeyHandler keys, ControllerState curr) {
-    	return keys.keys[KEY_CROUCH] || curr.b;
+    	return keys.keys[KEY_CROUCH] || curr.b || curr.dpadDown;
     }
     
     public boolean escape(KeyHandler keys, ControllerState curr) {
     	return keys.isJustPressed(KEY_ESCAPE) || curr.startJustPressed;
+    }
+    
+    public boolean debug(KeyHandler keys, ControllerState curr) {
+    	return curr.backJustPressed;
     }
 }
